@@ -15,6 +15,17 @@ st.set_page_config(
 SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSJGD3mdZMoxEKcUAi96ci1tpgA64q7b3IcKAXSpescfRa8e3eulvKrtHBYBXLvY8yRThoFuO0Dc6Ag/pub?output=csv"
 H3_RESOLUTION = 7
 
+# --- SESSION STATE INITIALIZATION ---
+# This acts as the short-term memory so your filters don't wipe out on refresh
+if "show_grab" not in st.session_state:
+    st.session_state.show_grab = True
+if "show_non_grab" not in st.session_state:
+    st.session_state.show_non_grab = True
+if "show_proposed" not in st.session_state:
+    st.session_state.show_proposed = True
+if "show_grid" not in st.session_state:
+    st.session_state.show_grid = True
+
 def clean_numeric(val):
     """Safely converts currency/text fields to numeric values without crashing."""
     if pd.isna(val):
@@ -33,19 +44,29 @@ def fetch_and_process_data(url):
 
 st.title("⬡ Grab Market Coverage & Cannibalization Risk Map")
 
+# --- SIDEBAR INTERFACE ---
 with st.sidebar:
     st.header("🔄 Control Panel")
+    
+    # 1. The Live Data Sync Button
     if st.button("🔴 Force Refresh Live Data", use_container_width=True):
         st.cache_data.clear()
-        st.success("Cache cleared! Re-fetching Google Sheets...")
+        st.success("Data synced! Retaining selection states...")
         st.rerun()
         
     st.markdown("---")
+    st.subheader("👁️ Layer Visibility Control")
+    st.write("Toggle visibility options here to keep them locked across data refreshes:")
+    
+    # 2. Sidebar Toggles that directly manage memory states
+    st.session_state.show_grab = st.checkbox("🟢 GRAB Stores", value=st.session_state.show_grab)
+    st.session_state.show_non_grab = st.checkbox("🔵 Non-Grab Stores", value=st.session_state.show_non_grab)
+    st.session_state.show_proposed = st.checkbox("🟡 Proposed Grab Stores", value=st.session_state.show_proposed)
+    st.session_state.show_grid = st.checkbox("⬡ Cannibalization Risk Grid", value=st.session_state.show_grid)
+
+    st.markdown("---")
     st.markdown("""
     **Legend Indicators:**
-    * 🟢 **GRAB** Store Pins
-    * 🔵 **Non-Grab Store** Pins
-    * 🟡 **Proposed Grab Store** Pins
     * 🟥 **Red Hexagons:** Cannibalization Risk Zone (2+ Stores inside ~5.16 sq km area)
     * 🟪 **Gray Hexagons:** Isolated Territory Zone (1 Store)
     """)
@@ -59,17 +80,17 @@ try:
     if missing:
         st.error(f"❌ Column Header Error: Missing columns: {missing}")
     else:
-        # Initialize map centered directly over Metro Manila
+        # Initialize map centered over Metro Manila
         m = folium.Map(location=[14.5995, 120.9842], zoom_start=11, tiles=None)
         folium.TileLayer('CartoDB dark_matter', name="🌙 Dark Mode (Default)").add_to(m)
         folium.TileLayer('OpenStreetMap', name="☀️ Light Mode").add_to(m)
 
-        # Create 3 DISTINCT high-performance cluster layers for selective filtering toggles
-        cluster_grab = MarkerCluster(name="🟢 GRAB Stores", show=True).add_to(m)
-        cluster_non_grab = MarkerCluster(name="🔵 Non-Grab Stores", show=True).add_to(m)
-        cluster_proposed = MarkerCluster(name="🟡 Proposed Grab Stores", show=True).add_to(m)
+        # Cluster and Grid layers honor your Sidebar memory selections
+        cluster_grab = MarkerCluster(name="🟢 GRAB Stores", show=st.session_state.show_grab).add_to(m)
+        cluster_non_grab = MarkerCluster(name="🔵 Non-Grab Stores", show=st.session_state.show_non_grab).add_to(m)
+        cluster_proposed = MarkerCluster(name="🟡 Proposed Grab Stores", show=st.session_state.show_proposed).add_to(m)
         
-        layer_h3_grid = folium.FeatureGroup(name="⬡ Cannibalization Risk Grid", overlay=True, show=True)
+        layer_h3_grid = folium.FeatureGroup(name="⬡ Cannibalization Risk Grid", overlay=True, show=st.session_state.show_grid)
 
         h3_clusters = {}
 
@@ -78,7 +99,6 @@ try:
                 lat = clean_numeric(row["LATITUDE"])
                 lon = clean_numeric(row["LONGITUDE"])
 
-                # Filter coordinates to avoid out-of-bounds map rendering freezes
                 if lat == 0.0 or lon == 0.0 or pd.isna(lat) or pd.isna(lon):
                     continue
                 if not (13.0 <= lat <= 16.0 and 119.0 <= lon <= 123.0):
@@ -117,7 +137,6 @@ try:
                 </div>
                 """
 
-                # Standardize checking to parse user's new parameter types accurately
                 status_clean = str(row["GRAB STATUS"]).strip().upper()
                 
                 if status_clean == "GRAB":
@@ -127,13 +146,12 @@ try:
                     pin_color = "blue"
                     target_cluster = cluster_non_grab
                 elif "PROPOSED" in status_clean:
-                    pin_color = "orange"  # Folium uses 'orange' for standard yellow map pins rendering
+                    pin_color = "orange"
                     target_cluster = cluster_proposed
                 else:
                     pin_color = "purple"
                     target_cluster = cluster_non_grab
 
-                # Map pins safely into their targeted checkboxes
                 folium.Marker(
                     location=[lat, lon],
                     popup=folium.Popup(popup_html, max_width=320),
@@ -189,10 +207,10 @@ try:
 
         layer_h3_grid.add_to(m)
         
-        # Display selection options to upper-right hand corner control panel frame 
+        # Keep map layer control menu clean and synced 
         folium.LayerControl(collapsed=False).add_to(m)
 
-        # High-performance server rendering execution parameters setup
+        # Render step passing static parameters to preserve state
         st_folium(m, width="100%", height=710, use_container_width=True, returned_objects=[])
 
 except Exception as e:
