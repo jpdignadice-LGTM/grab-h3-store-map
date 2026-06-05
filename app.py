@@ -43,10 +43,10 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("""
     **Legend Indicators:**
-    * 🟢 **ACTIVE** Store Pins
-    * 🔵 **Existing** Store Pins
-    * 🟡 **ONBOARDING** Store Pins
-    * 🟥 **Red Hexagons:** Cannibalization Risk Zone (2+ Stores)
+    * 🟢 **GRAB** Store Pins
+    * 🔵 **Non-Grab Store** Pins
+    * 🟡 **Proposed Grab Store** Pins
+    * 🟥 **Red Hexagons:** Cannibalization Risk Zone (2+ Stores inside ~5.16 sq km area)
     * 🟪 **Gray Hexagons:** Isolated Territory Zone (1 Store)
     """)
 
@@ -59,14 +59,17 @@ try:
     if missing:
         st.error(f"❌ Column Header Error: Missing columns: {missing}")
     else:
-        # Initialize map centered directly over Manila
+        # Initialize map centered directly over Metro Manila
         m = folium.Map(location=[14.5995, 120.9842], zoom_start=11, tiles=None)
         folium.TileLayer('CartoDB dark_matter', name="🌙 Dark Mode (Default)").add_to(m)
         folium.TileLayer('OpenStreetMap', name="☀️ Light Mode").add_to(m)
 
-        # High-performance marker clustering container
-        marker_cluster = MarkerCluster(name="📍 Clustered Store Locations").add_to(m)
-        layer_h3_grid = folium.FeatureGroup(name="⬡ Cannibalization Risk Grid", overlay=True)
+        # Create 3 DISTINCT high-performance cluster layers for selective filtering toggles
+        cluster_grab = MarkerCluster(name="🟢 GRAB Stores", show=True).add_to(m)
+        cluster_non_grab = MarkerCluster(name="🔵 Non-Grab Stores", show=True).add_to(m)
+        cluster_proposed = MarkerCluster(name="🟡 Proposed Grab Stores", show=True).add_to(m)
+        
+        layer_h3_grid = folium.FeatureGroup(name="⬡ Cannibalization Risk Grid", overlay=True, show=True)
 
         h3_clusters = {}
 
@@ -75,7 +78,7 @@ try:
                 lat = clean_numeric(row["LATITUDE"])
                 lon = clean_numeric(row["LONGITUDE"])
 
-                # Filter coordinates to avoid world-map rendering loops
+                # Filter coordinates to avoid out-of-bounds map rendering freezes
                 if lat == 0.0 or lon == 0.0 or pd.isna(lat) or pd.isna(lon):
                     continue
                 if not (13.0 <= lat <= 16.0 and 119.0 <= lon <= 123.0):
@@ -104,6 +107,7 @@ try:
                 <div style="font-family: Arial, sans-serif; min-width: 200px; font-size: 12px; color: #2c3e50;">
                     <h4 style="margin:0 0 5px 0; color:#2980b9;"><b>{row['Store Name']}</b></h4>
                     <p style="margin:2px 0;"><b>Code:</b> {row['Store Code']}</p>
+                    <p style="margin:2px 0;"><b>Status:</b> {row['GRAB STATUS']}</p>
                     <hr style="margin: 5px 0; border-top: 1px solid #ddd;">
                     <table style="width:100%;">
                         <tr><td><b>SPD:</b></td><td style="text-align:right;">{spd_val:,.0f}</td></tr>
@@ -113,28 +117,34 @@ try:
                 </div>
                 """
 
-                status = str(row["GRAB STATUS"]).strip().upper()
-                if status == "ACTIVE":
+                # Standardize checking to parse user's new parameter types accurately
+                status_clean = str(row["GRAB STATUS"]).strip().upper()
+                
+                if status_clean == "GRAB":
                     pin_color = "green"
-                elif status == "EXISTING STORE":
+                    target_cluster = cluster_grab
+                elif "NON-GRAB" in status_clean or "NON GRAB" in status_clean:
                     pin_color = "blue"
-                elif status == "ONBOARDING":
-                    pin_color = "orange"
+                    target_cluster = cluster_non_grab
+                elif "PROPOSED" in status_clean:
+                    pin_color = "orange"  # Folium uses 'orange' for standard yellow map pins rendering
+                    target_cluster = cluster_proposed
                 else:
                     pin_color = "purple"
+                    target_cluster = cluster_non_grab
 
-                # Add pins to the high-speed cluster instead of raw map layers
+                # Map pins safely into their targeted checkboxes
                 folium.Marker(
                     location=[lat, lon],
                     popup=folium.Popup(popup_html, max_width=320),
                     tooltip=str(row['Store Name']),
                     icon=folium.Icon(color=pin_color, icon="shopping-cart", prefix="fa"),
-                ).add_to(marker_cluster)
+                ).add_to(target_cluster)
                 
             except Exception:
                 continue
 
-        # Build Polygons
+        # Build Polygons Layer Loop
         for h3_idx, cluster in h3_clusters.items():
             boundary_vertices = h3.cell_to_boundary(h3_idx)
             avg_apc = cluster["total_apc"] / cluster["count"] if cluster["count"] > 0 else 0
@@ -178,9 +188,11 @@ try:
             ).add_to(layer_h3_grid)
 
         layer_h3_grid.add_to(m)
+        
+        # Display selection options to upper-right hand corner control panel frame 
         folium.LayerControl(collapsed=False).add_to(m)
 
-        # Render step using streamlined parameters
+        # High-performance server rendering execution parameters setup
         st_folium(m, width="100%", height=710, use_container_width=True, returned_objects=[])
 
 except Exception as e:
